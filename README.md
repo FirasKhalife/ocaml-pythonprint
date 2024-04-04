@@ -1,1 +1,1 @@
-# ocaml-prettyprintpy
+# ocaml-pythonprint
