@@ -1,4 +1,0 @@
-(lang dune 3.14)
-(name python_pp)
-(sections (lib .) (doc ../../doc/python_pp))
-(files (lib (META dune-package opam)) (doc (README.md)))
