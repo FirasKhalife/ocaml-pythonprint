@@ -1,0 +1,8 @@
+lib: [
+  "_build/install/default/lib/python_pp/META"
+  "_build/install/default/lib/python_pp/dune-package"
+  "_build/install/default/lib/python_pp/opam"
+]
+doc: [
+  "_build/install/default/doc/python_pp/README.md"
+]

@@ -1,0 +1,11 @@
+opam-version: "2.1"
+maintainer: "khalifefiras29@gmail.com"
+authors: ["Firas Khalife"]
+dev-repo: "git+https://github.com/FirasKhalife/ocaml-pythonprint.git"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml" {>= "4.10"}
+  "dune" {build}
+]
