@@ -6,7 +6,7 @@ open Python_pp.Utils
 
 ;;
 
-print_block [Assign (("app", None), AssignedExpr (Lam (["f"; "x"], App (Id "f", [Id "x"]))))];;
+print_block [AssignStmt ([("app", None)], AssignedExpr (Lam (["f"; "x"], App (Id "f", [Id "x"]))))];;
 brkln ();;
 
 let fields = 
@@ -22,7 +22,7 @@ brkln ();;
 println (for_stmt "i" (app (py_id "range") [of_int 10]) (print (py_id "i")));;
 brkln ();;
 
-println (while_stmt (lt $ py_id "i" $ py_int 10) (var_def ("i", None) (add $ py_id "i" $ py_int 1)));;
+println (while_stmt (lt $ py_id "i" $ py_int 10) (var_def [("i", None)] (add $ py_id "i" $ py_int 1)));;
 brkln ();;
 
 let list_type = TypeGeneric ("List", [TypeId "A"])
@@ -46,26 +46,35 @@ print_block $
   list_class @ 
   nil_class @ 
   cons_class @
-  [FunDef (
+  (* IfStmt (
+    Eq (Int 1, Int 2),
+    [Expression (Id "f")],
+    [], []
+  ) :: *)
+  FunDef (
     "app", 
     [TypeId "A"], 
     ["l1", Some (TypeGeneric ("List", [TypeId "A"])); 
      "l2", Some (TypeGeneric ("List", [TypeId "A"]));],
     [Match (Id "l1", 
       [App (Id "Nil", []), 
-        [Return (Id "l2")];
+        [Return (Id "f")];
        App (Id "Cons", [Id "x"; Id "xs"]), 
         [Return (App (Id "Cons", [Id "x"; App (Id "app", [Id "xs"; Id "l2"])]))]
       ])]
-  )] @
-  [Expression (
+  ) ::
+  AssignStmt (
+    [("f", None)], AssignedExpr (Int 3)
+  ) ::
+  Expression (
     Mul (
       Add (App (Lam (["x";"y"], Id "x"), [Int 1; Int 2]), Int 10),
       IfExpr (
         Lt (Add (Int 1, Int 2), Int 3), 
         App (Lam (["x"], Sub (Id "x", Int 1)), [Int 2]),
-        App (Id "Nil", []))))
-  ];;
+        App (Id "Nil", [])))
+  ) :: []
+  ;;
 brkln ();;
 
 disable_verification ();;

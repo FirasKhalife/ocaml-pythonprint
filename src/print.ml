@@ -29,16 +29,44 @@ let equal_typed_ids id1 id2 = dprintf "%t = %s" id1 id2
 
 let dict_item k v = dprintf "%t: %t" k v
 
-let py_str s = dprintf "\'%s\'" s
+let await = dprintf "await %t"
+let py_star = dprintf "*%t"
+let py_str = dprintf "\'%s\'"
 let py_int = of_int
 let py_float = of_float
 let py_bool = of_bool
+let py_img {Complex.re ; Complex.im} =
+  if im = 0. then dprintf "%f" re
+  else if re = 0. then dprintf "%fj" im
+  else dprintf "%f + %fj" re im
+
+let comp_for = dprintf " for %t in %t"
+let comp_if = dprintf " if %t"
+let comprehension expr is_async comp_iter_l =
+  par_pat $
+    dprintf "%t %s%t" expr 
+      (if is_async then "async " else "") 
+      (concat_sep_pp spc identity comp_iter_l)
+
+let proper_slice lower upper stride =
+  let pp = dprintf "%t:%t" (get_or_mt lower) (get_or_mt upper) in
+  match stride with
+  | None -> pp
+  | Some s -> dprintf "%t:%t" pp s
+
+let slicing e slices = 
+  let pp = 
+    match slices with
+    | [] -> e
+    | _ -> concat_sep_pp spc identity slices
+  in
+  dprintf "%t %t" e pp
 
 let lambda_def ?(nl = false) args body =
-  dprintf "lambda%t: %t"
+  dprintf "@[<v 4>lambda%t: %t"
     (if args = [] then mt
      else (dprintf " %t" (concat_sep ", " identity args)))
-    (if nl then dprintf "@[<v 4>(\n%t@]@\n)" body else body)
+    (if nl then dprintf "(@\n%t@]@\n)" body else dprintf "%t@]" body)
 
 let dotted = concat_sep "." identity
 
@@ -193,7 +221,17 @@ let type_alias_custom t1 input = dprintf "type %t = %s" (py_type t1) input
 
 let type_def id name = dprintf "%s = TypeVar('%s')" id name
 
-let var_def id expr = dprintf "%t = %t" (typed_id id) expr
+let var_def ids expr = 
+  let ids =
+    match ids with
+    | [] -> raise (Invalid_argument "Empty assignment")
+    | [id] -> typed_id id
+    | _ -> concat_map_comma (fun (name, _) -> name) ids
+  in
+  dprintf "%t = %t" ids expr
+
+let assign_expr id expr = 
+  dprintf "%s := %t" id expr
 
 (* TODO: NAMED PARAMETERS *)
 let app f args = dprintf "%t(%t)" f (concat_map_comma_pp identity args)

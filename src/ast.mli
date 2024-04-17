@@ -33,7 +33,7 @@ and class_block = class_stmt list
 and class_stmt =
   | ClassPass
   | ClassDecorator of py_id
-  | ClassVarDef of typed_id * expr
+  | ClassVarDef of typed_id list * expr
   | InstanceVarDef of py_id * py_type
   | MethodDef of py_id * type_params * params * block
 
@@ -48,12 +48,12 @@ and stmt =
   | Expression of expr
   (* decorator: expression *)
   | Decorator of py_id
-  (* yield: yield expression - only in function *)
-  | Yield of yield
   (* return an expression - only in function *)
   | Return of expr
+  (* typed identifier: py_id * py_type *)
+  | TypedId of typed_id
   (* assignment (let-in): typed_id * body *)
-  | Assign of typed_id * assigned_expr
+  | AssignStmt of typed_id list * assigned_expr
   (* type alias * existing type *)
   | TypeAlias of py_type * py_type
   (* type definition: py_id * var string *)
@@ -95,11 +95,27 @@ and stmt =
   (* continue *)
   | Continue
 
+(* expr [is_async] for expr in expr [if.. for.. if..] *)
+and comp = expr * bool * comp_iter list
+and comp_iter = 
+  (* for expr in expr *)
+  | CompFor of expr * expr
+  (* if expr *)
+  | CompIf of expr
+
+and slice = 
+  (* [lower bound] : [upper bound] [: stride] *)
+  | ProperSlice of expr option * expr option * expr option
+  (* any expr *)
+  | SliceExpr of expr
+
 and expr =
-  (* identifier - is not a statement! *)
+  (* identifier *)
   | Id of py_id
-  (* typed identifier: py_id * py_type *)
-  | TypedId of typed_id
+  (* await expression *)
+  | Await of expr
+  (* assignment expression: id := expr  *)
+  | AssignExpr of py_id * expr
   (* class field access, dotted in practice; e.g. (exprReturningClassInstance).prop1.prop2 *)
   | Attribute of expr * py_id list
   (* function application: expression * args *)
@@ -108,28 +124,34 @@ and expr =
   | Lam of py_id list * expr
   (* if expression: cond then else *)
   | IfExpr of expr * expr * expr
+  (* yield: yield expression - only in function *)
+  | Yield of yield
   (* tuple *)
-  | Tuple of expr list
+  | PyTuple of expr list
   (* list *)
-  | List of expr list
+  | PyList of expr list
   (* set *)
-  | Set of expr list
+  | PySet of expr list
   (* dictionary *)
   | Dict of (expr * expr) list
-  (* subscript *)
-  | Subscript of expr * expr
-  (* slice *)
-  | Slice of expr option * expr option * expr option
-  (* list comprehension, [expr for expr in expr if expr] *)
-  | ListComp of expr * expr * expr list * expr option
-  (* set comprehension, {expr for expr in expr if expr} *)
-  | SetComp of expr * expr * expr list * expr option
-  (* dictionary comprehension, {expr: expr for expr in expr if expr} *)
-  | DictComp of expr * expr * expr * expr list * expr option
-  (* generator expression, (expr for expr in expr if expr) *)
-  | GenExpr of expr * expr * expr list * expr option
+  (* subscript: expr[e1, e2,...] *)
+  | Subscription of expr * expr list
+  (* slicing: primary * slice list  *)
+  | Slicing of expr * slice list
+  (* list comprehension: [comp] *)
+  | ListComp of comp
+  (* set comprehension: {comp} *)
+  | SetComp of comp
+  (* dictionary comprehension: {comp} - syntactically identical but semantically different of a set *)
+  | DictComp of comp
+  (* generator expression: (comp) *)
+  | GenExpr of comp
+  (* starred expression, unpacking: *iterable *)
+  | Starred of expr
   (* string *)
   | String of string
+  (* imaginary number *)
+  | Img of Complex.t
   (* int *)
   | Int of int
   (* float *)
