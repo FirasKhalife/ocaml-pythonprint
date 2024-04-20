@@ -3,6 +3,9 @@ open Format
 open Print_terms
 open Utils
 
+let enable_verification () = verif := true
+let disable_verification () = verif := false
+
 let get_block ?(env = empty_env) stmts : string =
   asprintf "@[<v>%t@]" (of_block ~env stmts)
 

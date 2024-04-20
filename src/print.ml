@@ -16,13 +16,14 @@ let attribute obj = function
 let rec py_type = function
   | TypeId id -> str id
   | TypeGeneric (id, params) -> dprintf "%s%t" id (type_params params)
+  | Callable (args, ret) -> dprintf "Callable[%t, %t]" (type_params args) (py_type ret)
 
 and type_params = function
   | [] -> mt
   | l -> brak_pat $ concat_map_comma_pp py_type l
 
 let typed_id (name, t_opt) =
-  dprintf "%s%t" name (get_or_mt_map (fun t -> dprintf ": %t" $ py_type t) t_opt)
+  dprintf "%s%t" name (map_or_mt (fun t -> dprintf ": %t" $ py_type t) t_opt)
 
 let equal_ids id1 id2 = dprintf "%t = %t" id1 id2
 let equal_typed_ids id1 id2 = dprintf "%t = %s" id1 id2 
@@ -31,6 +32,7 @@ let dict_item k v = dprintf "%t: %t" k v
 
 let await = dprintf "await %t"
 let py_star = dprintf "*%t"
+let py_doublestar = dprintf "**%t"
 let py_str = dprintf "\'%s\'"
 let py_int = of_int
 let py_float = of_float
@@ -40,13 +42,13 @@ let py_img {Complex.re ; Complex.im} =
   else if re = 0. then dprintf "%fj" im
   else dprintf "%f + %fj" re im
 
-let comp_for = dprintf " for %t in %t"
+let comp_for is_async targets = 
+  let targets = concat_comma_pp targets in
+  dprintf " for %s%t in %t" (if is_async then "async " else "") targets
 let comp_if = dprintf " if %t"
-let comprehension expr is_async comp_iter_l =
-  par_pat $
-    dprintf "%t %s%t" expr 
-      (if is_async then "async " else "") 
-      (concat_sep_pp spc identity comp_iter_l)
+let dict_comp = dprintf "{%t : %t}"
+let comprehension expr comp_iter_l =
+  dprintf "%t %t" expr (concat_sep_pp spc identity comp_iter_l)
 
 let proper_slice lower upper stride =
   let pp = dprintf "%t:%t" (get_or_mt lower) (get_or_mt upper) in
@@ -60,7 +62,7 @@ let slicing e slices =
     | [] -> e
     | _ -> concat_sep_pp spc identity slices
   in
-  dprintf "%t %t" e pp
+  dprintf "%t[%t]" e pp
 
 let lambda_def ?(nl = false) args body =
   dprintf "@[<v 4>lambda%t: %t"
@@ -92,36 +94,49 @@ let from_import modul names =
 
 let from_import_all modul = dprintf "from %s import *" modul
 
+let maybe_append_block name suite initial = 
+  if ismt (asprintf "%t" suite) then initial
+  else dprintf "%t@\n@[<v 4>%s:@\n%t@]" initial name suite
+
 let if_stmt cond then_block elifs else_block =
   let if_cond = dprintf "@[<v 4>if %t:@\n%t@]" cond then_block in
-  let elifs =
-    concat_sep_pp fnl 
-      (fun (cond, body) -> dprintf "@\n@[<v 4>elif %t:@\n%t@]" cond body) 
-      elifs 
+  let if_elifs = 
+    dprintf "%t%t" if_cond
+      (concat_sep_pp fnl (fun (cond, body) -> dprintf "@\n@[<v 4>elif %t:@\n%t@]" cond body) elifs)
   in
-  let else_block = 
-    if ismt (asprintf "%t" else_block) then mt
-    else dprintf "@\n@[<v 4>else:@\n%t@]" else_block
-  in
-  dprintf "%t%t%t" if_cond elifs else_block
+  maybe_append_block "else" else_block if_elifs
 
-let while_stmt cond body =
-  dprintf "@[<v 4>while %t:@\n%t@]" cond body
+let while_stmt cond body else_block =
+  let while_block = dprintf "@[<v 4>while %t:@\n%t@]" cond body in
+  maybe_append_block "else" else_block while_block
 
-let for_stmt id iterable body =
-  dprintf "@[<v 4>for %s in %t:@\n%t@]" id iterable body
+let for_stmt targets iterables body else_block =
+  let targets = concat_comma_pp targets in
+  let iterables = concat_comma_pp iterables in
+  let for_block = dprintf "@[<v 4>for %t in %t:@\n%t@]" targets iterables body in
+  maybe_append_block "else" else_block for_block
 
-let except exn_name target exn_body =
-  dprintf "@[<v 4>except %s as %s:@\n%t@]" exn_name target exn_body
+let except star exn target_opt body =
+  let star_str = if star then "*" else "" in
+  if ismt (asprintf "%t" exn) then dprintf "@[<v 4>except:@\n%t@]" body
+  else
+    match target_opt with
+    | None -> dprintf "@[<v 4>except%s %t:@\n%t@]" star_str exn body
+    | Some target -> dprintf "@[<v 4>except%s %t as %s:@\n%t@]" star_str exn target body
 
-let try_except try_block exns finally_block =
+let try_except try_block (star, exns) else_block finally_block =
   let try_block = dprintf "@[<v 4>try:@\n%t@]" try_block in
-  let exns = 
-    concat_sep_pp fnl (fun (name, target, body) -> except name target body) exns 
+  let try_exn =
+    dprintf "%t@\n%t"
+      try_block
+      (concat_sep_pp fnl (fun (exn, target_opt, body) -> except star exn target_opt body) exns)
   in
-  let finally_block = dprintf "@[<v 4>finally:@\n%t@]" finally_block 
-  in
-  dprintf "%t%t%t" try_block exns finally_block
+  maybe_append_block "finally" finally_block $
+    maybe_append_block "else" else_block try_exn
+
+let try_finally try_block finally_block =
+  let try_block = dprintf "@[<v 4>try:@\n%t@]" try_block in
+  dprintf "%t@\n@[<v 4>finally:@\n%t@]" try_block finally_block
 
 let with_stmt expr target body =
   dprintf "@[<v 4>with %t as %s:@\n%t@]" expr target body
@@ -145,7 +160,7 @@ let py_raise exn msg from =
 
 let py_assert expr expr_opt = 
   dprintf "assert %t%t" expr $
-    get_or_mt_map (dprintf ", %t") expr_opt
+    map_or_mt (dprintf ", %t") expr_opt
 
 let yield_from exp = dprintf "yield from %t" exp
 let yield_raw l =
@@ -157,9 +172,11 @@ let yield_raw l =
 let py_args args =
   par_pat $ concat_map_comma_pp typed_id args
 
-let fun_def name params args body =
-  dprintf "@[<v 4>def %s%t%t:@\n%t@]" 
-    name (type_params params) (py_args args) body
+let fun_def name params args (body, ret_type) =
+  dprintf "@[<v 4>def %s%t%t%t:@\n%t@]" 
+    name (type_params params) (py_args args)
+    (match ret_type with None -> mt | Some t -> dprintf " -> %t" $ py_type t)
+    body
 
 let self_field = "self", None
 
@@ -179,14 +196,14 @@ let init fields =
     | [] -> pass
     | fields -> concat_sep_pp fnl (fun (name, _) -> dprintf "self.%s = %s" name name) fields
   in
-  fun_def "__init__" [] (self_field :: fields) body
+  fun_def "__init__" [] (self_field :: fields) (body, None)
 
-let getter ?(gettername = "") field : formatter -> unit =
+let getter ?(gettername = "") field =
   let fun_name =
     if ismt gettername then asprintf "get_%s" (fst field)
     else gettername
   in
-  fun_def fun_name [] [self_field] (return $ attribute (py_id "self") [fst field])
+  fun_def fun_name [] [self_field] (return $ attribute (py_id "self") [fst field], None)
 
 let getters fields = concat_sep_pp fnl (fun (name, _) -> getter name) fields
 
@@ -195,7 +212,7 @@ let setter ?(settername = "") field =
     if ismt settername then asprintf "set_%s" (fst field)
     else settername
   in
-  fun_def fun_name [] [self_field; field] (return $ attribute (py_id "self") [fst field])
+  fun_def fun_name [] [self_field; field] (return $ attribute (py_id "self") [fst field], None)
 
 let setters fields = concat_sep_pp fnl (fun field -> setter field) fields
 
@@ -207,7 +224,7 @@ let __str__ fields =
         let list = concat_sep_pp (str ", ") (fun (name, _) -> dprintf "{%s}" name) fields in
         return $ dprintf "f'(%t)'" list
   in
-  fun_def "__str__" [] [self_field] body
+  fun_def "__str__" [] [self_field] (body, None)
 
 let class_def name pl parents body =
   dprintf "@[<v 4>class %s%t%t:@\n%t@]"

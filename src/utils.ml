@@ -9,8 +9,7 @@ let push_id = StringSet.add
 let push_id_list l env = List.fold_left (fun env id -> push_id id env) env l
 
 let verif = ref true
-let enable_verification () = verif := true
-let disable_verification () = verif := false
+
 let verify_id id env = 
   if !verif && not (StringSet.mem id env) then
     raise (Invalid_argument (Format.asprintf "Identifier %s not found in current context" id)) 
@@ -21,11 +20,11 @@ let ismt = String.equal ""
 let mt = Format.dprintf ""
 let spc = Format.dprintf " "
 
-let get_or_mt_map f = function
+let map_or_mt f = function
   | Some x -> f x
   | None -> mt
 
-let get_or_mt = get_or_mt_map identity
+let get_or_mt = map_or_mt identity
 
 let fnl = Format.dprintf "@\n"
 let fnl2 = Format.dprintf "@\n@\n"

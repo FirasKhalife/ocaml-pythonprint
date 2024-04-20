@@ -11,19 +11,27 @@ let p_of_expr = function
   | App _ | PyTuple _ | PyList _ | PySet _ | Dict _ -> 0
   | Subscription _ | Slicing _ | ListComp _ | SetComp _ | DictComp _ | GenExpr _ -> 5
   | Await _ -> 10
-  | Pow _ -> 15
-  | Pos _ | Neg _ | BitNot _ -> 20
-  | Mul _ | MatrixMul _ | Div _ | FloorDiv _ | Mod _ -> 25
-  | Add _ | Sub _ -> 30
-  | LShift _ | RShift _ -> 35
-  | BitAnd _ -> 40
-  | BitXor _ -> 45
-  | BitOr _ -> 50
-  | In _ | NotIn _ | Is _ | IsNot _
-    | Lt _ | LtE _ | Gt _ | GtE _ | Neq _ | Eq _ -> 55
-  | Not _ -> 60
-  | And _ -> 65
-  | Or _ -> 70
+  | UnOp (op, _) -> 
+    begin
+      match op with
+      | Pos | Neg | BitNot -> 20
+      | Not -> 60
+    end
+  | BinOp (op, _, _) -> 
+    begin
+      match op with
+      | Pow -> 15  
+      | Mul | MatrixMul | Div | FloorDiv | Mod -> 25
+      | Add | Sub -> 30
+      | LShift | RShift -> 35
+      | BitAnd -> 40
+      | BitXor -> 45
+      | BitOr -> 50
+      | In | NotIn | Is | IsNot
+        | Lt | LtE | Gt | GtE | Neq | Eq -> 55
+      | And -> 65
+      | Or -> 70
+    end
   | IfExpr _ -> 75
   | Lam _ -> 80
   | AssignExpr _ -> 85
@@ -61,15 +69,40 @@ let is_primary = function
   | exp when is_atom exp -> true 
   | _ -> false
 
-let is_op = function
-  | Pos _ | Neg _ | Not _ | BitNot _ -> true
-  | Add _ | Sub _ | Mul _ | MatrixMul _ | Div _ | FloorDiv _ | Mod _ -> true
-  | Pow _ | LShift _ | RShift _ -> true
-  | BitAnd _ | BitXor _ | BitOr _ -> true
-  | And _ | Or _ -> true
-  | Eq _ | Neq _ | Lt _ | LtE _ | Gt _ | GtE _ -> true
-  | Is _ | IsNot _ | In _ | NotIn _ -> true
+let is_or_expr = function
+  | UnOp (op, _) -> 
+    begin 
+      match op with
+      | Pos | Neg | BitNot -> true
+      | Not -> false
+    end
+  | BinOp (op, _, _) ->
+    begin
+      match op with
+      | Add | Sub | Mul | MatrixMul | Div | FloorDiv | Mod -> true
+      | Pow | LShift | RShift -> true
+      | BitAnd | BitXor | BitOr -> true
+      | Eq | Neq | Lt | LtE | Gt | GtE -> true
+      | Is | IsNot | In | NotIn -> true
+      | _ -> false
+    end
   | exp when is_primary exp -> true
+  | _ -> false
+
+let is_or_test = function
+  | BinOp (op, _, _) ->
+    begin
+      match op with
+      | And | Or -> true
+      | _ -> false
+    end
+  | UnOp (op, _) -> 
+    begin 
+      match op with
+      | Not -> true
+      | _ -> false
+    end
+  | e when is_or_expr e -> true
   | _ -> false
 
 let is_expr = function
@@ -77,38 +110,60 @@ let is_expr = function
   | IfExpr _-> true
   | _ -> false
 
+let is_assign_expr =  function
+  | AssignExpr _ -> true
+  | e when is_expr e -> true
+  | _ -> false 
+
+let is_starred_item = function
+  | Starred e when is_or_expr e -> true
+  | e when is_assign_expr e -> true
+  | _ -> false
+
+let is_starred_list = List.for_all is_starred_item 
+
 let rec is_target = function
-  | Id _ | Attribute _ | Subscription _ | Slicing _ | Starred _ -> true
+  | Id _ | Attribute _ | Subscription _ | Slicing _  -> true
+  | Starred e -> is_target e
   | PyList exprs -> List.for_all is_target exprs
   | PyTuple exprs -> List.for_all is_target exprs
   | _ -> false
 
 let is_target_list = List.for_all is_target
 
+let rec push_target env = function
+  | Id id -> push_id id env
+  | Starred e -> push_target env e
+  | PyList exprs | PyTuple exprs -> List.fold_left push_target env exprs
+  | _ -> env
+
+let push_target_list = List.fold_left push_target
+
 let rec of_assigned_expr ?(in_fun = false) ?(env = empty_env) = function
   | AssignedExpr e -> fst $ of_expr ~env e
   | AssignedYield y -> 
-      if !verif && not in_fun then raise (Invalid_argument "Yield statement outside of function")
-      else of_yield ~env y
+      if !verif && not in_fun then raise (Invalid_argument "Yield statement outside of function");
+      of_yield ~env y
 
 and of_yield ?(in_fun = false) ?(env = empty_env) exp =
-  if !verif && not in_fun then raise (Invalid_argument "Yield statement outside of function")
-  else
-    match exp with
-    | YieldRaw exps -> 
-        yield_raw (List.map (fun exp -> fst $ of_expr ?p:None ~env exp) exps)
-    | YieldFrom exp -> 
-        yield_from (fst $ of_expr ~env exp)
+  if !verif && not in_fun then raise (Invalid_argument "Yield statement outside of function");
+  match exp with
+  | YieldRaw exps -> 
+      yield_raw (List.map (fun exp -> fst $ of_expr ?p:None ~env exp) exps)
+  | YieldFrom exp -> 
+      yield_from (fst $ of_expr ~env exp)
 
 and of_class_block ?(env = empty_env) stmts =
-  let env = StringSet.union (StringSet.singleton "self") env in
-  let rec fold_rec acc = function
-  | [] -> acc
-  | [stmt] -> Format.dprintf "%t%t" acc (of_class_stmt ~next:None ~env stmt)
-  | stmt :: next :: stmts ->
-      fold_rec (Format.dprintf "%t%t" acc (of_class_stmt ~next:(Some next) ~env stmt)) (next::stmts)
-  in
-  fold_rec mt stmts
+  if List.length stmts = 0 then pass
+  else
+    let env = StringSet.union (StringSet.singleton "self") env in
+    let rec fold_rec acc = function
+    | [] -> acc
+    | [stmt] -> Format.dprintf "%t%t" acc (of_class_stmt ~next:None ~env stmt)
+    | stmt :: next :: stmts ->
+        fold_rec (Format.dprintf "%t%t" acc (of_class_stmt ~next:(Some next) ~env stmt)) (next::stmts)
+    in
+    fold_rec mt stmts
 
 and sep_inclass next_opt =
   let sep next =
@@ -116,19 +171,17 @@ and sep_inclass next_opt =
     | ClassVarDef _ | InstanceVarDef _ -> fnl
     | ClassDecorator _ -> fnl2
     | MethodDef _ -> fnl2
-    | ClassPass -> mt
   in
   Option.map sep next_opt
 
 and of_class_stmt ?(next = None) ?(env = empty_env) stmt =
   let stmt, sep =
     match stmt with
-    | ClassPass -> pass, Some mt
     | ClassDecorator id -> decorator id, Some fnl
     | ClassVarDef (ids, expr) -> var_def ids (fst $ of_expr ~env expr), sep_inclass next
     | InstanceVarDef (id, t) -> typed_id (id, Some t), sep_inclass next
-    | MethodDef (id, params, args, body) -> 
-        fun_def id params args (of_block ~in_fun:true ~env body), Some fnl2
+    | MethodDef (id, params, args, (body, ret_type)) -> 
+        fun_def id params args (of_block ~in_fun:true ~env body, ret_type), Some fnl2
   in
   let stmt_str = Format.asprintf "%t" stmt in
   if ismt stmt_str then stmt
@@ -169,13 +222,13 @@ and of_stmt ?(in_fun = false) ?(next = None) ?(env = empty_env) stmt =
     | Expression exp -> 
         begin 
           match exp with 
-          | Id _ -> raise (Invalid_argument "Statement cannot be a simple identifier")
+          | Id _ when !verif -> raise (Invalid_argument "Statement cannot be a simple identifier")
           | _ -> fst $ of_expr ~env exp, fnl, env
         end
     | Decorator id -> if !verif then verify_id id env; decorator id, fnl, env
     | Return e ->
-        if !verif && not in_fun then raise (Invalid_argument "Return statement outside of function")
-        else return $ fst (of_expr ~env e), fnl, env
+        if !verif && not in_fun then raise (Invalid_argument "Return statement outside of function");
+        return $ fst (of_expr ~env e), fnl, env
     | TypedId (s, t) -> typed_id (s, t), fnl, push_id s env
     | AssignStmt (ids, expr) -> 
         var_def ids (of_assigned_expr ~in_fun ~env expr), fnl, 
@@ -189,10 +242,10 @@ and of_stmt ?(in_fun = false) ?(next = None) ?(env = empty_env) stmt =
           | Some id -> if !verif then verify_id id env; id 
         in
         py_raise exn msg from, fnl, env
-    | FunDef (id, params, args, body) -> 
+    | FunDef (id, params, args, (body, ret_type)) -> 
         let arg_ids = List.map (fun (id, _) -> id) args in
         let env' = push_id_list (id :: arg_ids) env in
-        fun_def id params args (of_block ~env:env' ~in_fun:true body), fnl2,
+        fun_def id params args (of_block ~env:env' ~in_fun:true body, ret_type), fnl2,
           push_id id env
     | ClassDef (id, type_params, parents, body) ->
         class_def id type_params parents (of_class_block ~env body), fnl2,
@@ -213,8 +266,12 @@ and of_stmt ?(in_fun = false) ?(next = None) ?(env = empty_env) stmt =
         in
         py_match (fst $ of_expr ~env head) branches, fnl, env
     | IfStmt (cond, then_, elifs, else_) ->
+        if !verif && not (is_assign_expr cond) 
+          then raise (Invalid_argument "IfStmt condition should be a possibly assigned expression");
         let elifs = 
-          List.map (fun (cond, block) -> 
+          List.map (fun (cond, block) ->
+            if !verif && not (is_assign_expr cond) 
+              then raise (Invalid_argument "Elif condition should be a possibly assigned expression");
             fst $ of_expr ~env cond, 
             of_block ~env ~in_fun block) 
           elifs
@@ -222,20 +279,42 @@ and of_stmt ?(in_fun = false) ?(next = None) ?(env = empty_env) stmt =
         if_stmt (fst $ of_expr ~env cond) 
           (of_block ~env ~in_fun then_) 
           elifs (of_block ~env ~in_fun else_), fnl, env
-    | While (cond, body) -> 
-        while_stmt (fst $ of_expr ~env cond) (of_block ~env ~in_fun body), fnl, env
-    | For (id, exp, body) ->
-        let env' = push_id id env in
-        for_stmt id (fst $ of_expr ~env exp) (of_block ~env:env' ~in_fun body), fnl, env
-    | Try (body, excepts, finally) ->
-        let excepts = 
-          List.map (fun (exn, id, block) ->
-            let env' = push_id id env in 
-            exn, id, of_block ~env:env' ~in_fun block) 
-          excepts
+    | While (cond, body, else_) -> 
+        if !verif && not (is_assign_expr cond) 
+          then raise (Invalid_argument "While condition should be a possibly assigned expression");
+        while_stmt (fst $ of_expr ~env cond)
+          (of_block ~env ~in_fun body) (of_block ~env ~in_fun else_), fnl, env
+    | For (targets, iterables, body, else_) ->
+        if !verif then (
+          if not (is_target_list targets) 
+            then raise (Invalid_argument "For targets should be targets");
+          if not (is_starred_list iterables) 
+            then raise (Invalid_argument "For iterables should be an or_test"));
+        let env' = push_target_list env targets in
+        let targets, env' = fold_of_expr true env' targets in
+        for_stmt targets (fst $ fold_of_expr false env iterables)
+          (of_block ~env:env' ~in_fun body) (of_block ~env:env' ~in_fun else_), fnl, env
+    | TryExcept (try_, excepts, else_, finally) ->
+        let of_star_except (exn, id, block) = 
+          if !verif && not (is_expr exn)
+            then raise (Invalid_argument "Except exception should be a possibly assigned expression");
+          let env' = match id with None -> env | Some id -> push_id id env in
+          fst $ of_expr ~env exn, id, of_block ~env:env' ~in_fun block
         in
-        try_except (of_block ~in_fun body) 
-          excepts (of_block ~in_fun finally), fnl, env
+        let of_excepts (opt, block) =
+          match opt with
+          | None -> mt, None, of_block ~env ~in_fun block
+          | Some (exn, id) -> of_star_except (exn, id, block)
+        in
+        let excepts = 
+          match excepts with
+          | ExceptList exps -> false, List.map of_excepts exps
+          | ExceptStarList exps -> true, List.map of_star_except exps
+        in
+        try_except (of_block ~in_fun try_) excepts
+          (of_block ~in_fun else_) (of_block ~in_fun finally), fnl, env
+    | TryFinally (try_, finally) -> 
+        try_finally (of_block ~in_fun try_) (of_block ~in_fun finally), fnl, env
     | With (exp, id, body) -> 
         let env' = push_id id env in
         with_stmt (fst $ of_expr ~env exp) id (of_block ~env:env' ~in_fun body), fnl, env
@@ -257,11 +336,6 @@ and of_stmt ?(in_fun = false) ?(next = None) ?(env = empty_env) stmt =
 
 and concat_expr ?(p = 100) ?(env = empty_env) exps = 
   concat_map_comma_pp (fun exp -> fst $ of_expr ~p ~env exp) exps
-and of_un_op ?(p = 100) ?(env = empty_env) ?(sep_spc = false) op_str e =
-  let sep = if sep_spc then spc else mt in
-  combine_sep sep [str op_str; fst $ of_expr ~p ~env e]
-and of_bin_op ?(p = 100) ?(env = empty_env) op_str e1 e2 = 
-  combine_sep spc [fst $ of_expr ~p ~env e1; str op_str; fst $ of_expr ~p ~env e2]
 
 and fold_of_expr assign env args =
   let rec fold_rec env acc = function
@@ -274,37 +348,56 @@ and fold_of_expr assign env args =
 
 and of_slice env p assign = function
   | ProperSlice (lower, upper, stride) ->
-      if not (List.for_all (fun e -> is_expr $ Option.get e) 
+      if !verif && not (List.for_all (fun e -> is_expr $ Option.get e) 
           (List.filter Option.is_some [lower; upper; stride]))
-        then raise (Invalid_argument "Proper slice arguments should be expressions")
-        else
-          let lower = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) lower in
-          let upper = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) upper in
-          let stride = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) stride in
-          proper_slice lower upper stride
+        then raise (Invalid_argument "Proper slice arguments should be expressions");
+      let lower = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) lower in
+      let upper = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) upper in
+      let stride = Option.map (fun e -> fst $ of_expr ~env ~p ~assign e) stride in
+      proper_slice lower upper stride
   | SliceExpr exp -> fst $ of_expr ~env exp
 
 and of_comp_iter env = function
-  | CompFor (idx, iterable) ->
-      let idx, env' = of_expr ~env idx in
-      let iterable, _ = of_expr ~env iterable in
-      comp_for idx iterable, env'
+  | CompFor (is_async, targets, iterable) ->
+      if !verif && not (is_target_list targets) 
+        then raise (Invalid_argument "CompFor target should be a target");
+      if !verif && not (is_or_test iterable) 
+        then raise (Invalid_argument "CompFor iterable should be an or_test");
+      let iterable, env' = of_expr ~assign:true ~env iterable in
+      let targets, env' = fold_of_expr true env' targets in
+      comp_for is_async targets iterable, env'
   | CompIf expr -> 
+      if !verif && not (is_or_test expr) 
+        then raise (Invalid_argument "CompIf condition should be an or_test");
       let expr, _ = of_expr ~env expr in
       comp_if expr, env 
 
-and of_comp env (expr, is_async, comp_iter_l) =
+and of_comp env (expr, comp_iter_l) =
   match comp_iter_l with
-  | [] -> raise (Invalid_argument "Empty comprehension")
-  | CompIf _ :: _ -> raise (Invalid_argument "First comprehension should be a CompFor")
+  | [] | CompIf _ :: _ when !verif -> raise (Invalid_argument "First comprehension should be a CompFor")
   | _ ->
+      if !verif && not (is_assign_expr expr) 
+        then raise (Invalid_argument "Comprehension expression should be a possibly assigned expression");
       let clauses, env =
         List.fold_left 
           (fun (acc, env) iter -> let comp, env = of_comp_iter env iter in comp :: acc, env) 
           ([], env) comp_iter_l
       in
       let expr, _ = of_expr ~env expr in
-      comprehension expr is_async (List.rev clauses)
+      comprehension expr (List.rev clauses), env
+
+and of_dict_item env = function
+  | DictItem (key, value) -> 
+      if !verif && not (is_expr key) 
+        then raise (Invalid_argument "Dict key should be an expression");
+      if !verif && not (is_expr value) 
+        then raise (Invalid_argument "Dict value should be an expression");
+      dict_item (fst $ of_expr ~env key) (fst $ of_expr ~env value)
+  | DictUnpack e ->
+      if !verif && not (is_or_expr e) 
+        then raise (Invalid_argument "Dictionary unpacking value should be an or expression");
+      let e, _ = of_expr ~env e in
+      py_doublestar e
 
 (** [p] stands for the current precedence level
     [assign] specifies whether identifiers should be added to the environment *)
@@ -317,10 +410,13 @@ and of_expr ?(p = 100) ?(assign = false) ?(env = empty_env) expr =
         if assign then py_id id, push_id id env
         else (if !verif then verify_id id env; py_id id, env)
     | AssignExpr (id, expr) ->
+        if !verif && not (is_expr expr) 
+          then raise (Invalid_argument "AssignExpr right-hand side should be an expression");
         let env = push_id id env in 
         let expr, env = of_expr ~env expr in
         assign_expr id expr, env
     | Starred e -> py_star (fst $ of_expr ~p ~env e), env
+    | DoubleStarred e -> py_doublestar (fst $ of_expr ~p ~env e), env
     | Await e -> await (fst $ of_expr ~p ~env e), env
     | Attribute (obj, ids) -> 
         attribute (fst $ of_expr ~p ~env obj) ids, env
@@ -330,8 +426,7 @@ and of_expr ?(p = 100) ?(assign = false) ?(env = empty_env) expr =
         if assign then app f args, env' else app f args, env
     | Lam (ids, body) ->
         let env' = push_id_list ids env in
-        let nl = match body with Lam _ -> true | _ -> false in
-        lambda_def ~nl ids (fst (of_expr ~p ~env:env' body)), env
+        lambda_def ids (fst (of_expr ~p ~env:env' body)), env
     (* TODO: it was considered as a stmt, 
        has to be considered as an expression and detect whether it is in a function or not *)
     | Yield yield -> of_yield ~in_fun: false ~env yield, env
@@ -350,52 +445,63 @@ and of_expr ?(p = 100) ?(assign = false) ?(env = empty_env) expr =
         let args, env' = fold_of_expr assign env args in
         curly_pat $ concat_comma_pp args, env'
     | Dict args ->
-        curly_pat $ concat_map_comma_pp (fun (k, v) -> 
-          dict_item (fst $ of_expr ~env k) (fst $ of_expr ~env v)) args, env
+        curly_pat $ concat_map_comma_pp (of_dict_item env) args, env
     | Subscription _ -> failwith "Subscript not supported"
     | Slicing (e, slices) -> 
-        if not (is_primary e) then raise (Invalid_argument "Slicing first arg should be a primary")
-        else
-          let e, _ = of_expr ~p ~env e in
-          slicing e (List.map (of_slice env p assign) slices), env
-    | ListComp e -> of_comp env e, env 
-    | SetComp e -> of_comp env e, env 
-    | DictComp e -> of_comp env e, env 
-    | GenExpr e -> of_comp env e, env 
+        if !verif && 
+          not (is_primary e) then raise (Invalid_argument "Slicing first arg should be a primary");
+        let e, _ = of_expr ~p ~env e in
+        slicing e (List.map (of_slice env p assign) slices), env
+    | ListComp e -> brak_pat (fst $ of_comp env e), env 
+    | SetComp e -> curly_pat (fst $ of_comp env e), env
+    | DictComp (key, e) -> 
+        if not (is_expr key) then raise (Invalid_argument "DictComp key should be an expression");
+        let comp, env = of_comp env e in
+        dict_comp (fst $ of_expr ~env key) comp, env 
+    | GenExpr e -> par_pat (fst $ of_comp env e), env
     | String s -> if assign then py_str s, push_id s env else py_str s, env
     | Img i -> py_img i, env
     | Int i -> py_int i, env
     | Float f -> py_float f, env
     | Bool b -> py_bool b, env
     | PyNone -> py_none, env
-    | Pos e              -> of_un_op ~p ~env "+" e, env
-    | Neg e              -> of_un_op ~p ~env "-" e, env
-    | Not e              -> of_un_op ~p ~env "not" e ~sep_spc:true, env
-    | BitNot e           -> of_un_op ~p ~env "~" e, env
-    | Add (e1, e2)       -> of_bin_op ~p ~env "+" e1 e2, env
-    | Sub (e1, e2)       -> of_bin_op ~p ~env "-" e1 e2, env
-    | Mul (e1, e2)       -> of_bin_op ~p ~env "*" e1 e2, env
-    | MatrixMul (e1, e2) -> of_bin_op ~p ~env "@" e1 e2, env
-    | Div (e1, e2)       -> of_bin_op ~p ~env "/" e1 e2, env
-    | FloorDiv (e1, e2)  -> of_bin_op ~p ~env "//" e1 e2, env
-    | Mod (e1, e2)       -> of_bin_op ~p ~env "%" e1 e2, env
-    | Pow (e1, e2)       -> of_bin_op ~p ~env "**" e1 e2, env
-    | LShift (e1, e2)    -> of_bin_op ~p ~env "<<" e1 e2, env
-    | RShift (e1, e2)    -> of_bin_op ~p ~env "<<" e1 e2, env
-    | BitOr (e1, e2)     -> of_bin_op ~p ~env "|" e1 e2, env
-    | BitAnd (e1, e2)    -> of_bin_op ~p ~env "&" e1 e2, env
-    | BitXor (e1, e2)    -> of_bin_op ~p ~env "^" e1 e2, env
-    | And (e1, e2)       -> of_bin_op ~p ~env "and" e1 e2, env
-    | Or (e1, e2)        -> of_bin_op ~p ~env "or" e1 e2, env
-    | Eq (e1, e2)        -> of_bin_op ~p ~env "==" e1 e2, env
-    | Neq (e1, e2)       -> of_bin_op ~p ~env "!=" e1 e2, env
-    | Lt (e1, e2)        -> of_bin_op ~p ~env "<" e1 e2, env
-    | LtE (e1, e2)       -> of_bin_op ~p ~env "<=" e1 e2, env
-    | Gt (e1, e2)        -> of_bin_op ~p ~env ">" e1 e2, env
-    | GtE (e1, e2)       -> of_bin_op ~p ~env ">=" e1 e2, env
-    | Is (e1, e2)        -> of_bin_op ~p ~env "is" e1 e2, env
-    | IsNot (e1, e2)     -> of_bin_op ~p ~env "is not" e1 e2, env
-    | In (e1, e2)        -> of_bin_op ~p ~env "in" e1 e2, env
-    | NotIn (e1, e2)     -> of_bin_op ~p ~env "not in" e1 e2, env
+    | UnOp (op, e) -> 
+        combine_sep spc [str (string_of_un_op op); fst $ of_expr ~p ~env e], env
+    | BinOp (op, e1, e2) ->
+        combine_sep spc 
+            [fst $ of_expr ~p ~env e1; str (string_of_bin_op op); fst $ of_expr ~p ~env e2], env
   in
-  (if p > parent_p then par_pat pp else pp), env
+  (if p >= parent_p then par_pat pp else pp), env
+
+and string_of_un_op = function
+    | Pos    -> "+"
+    | Neg    -> "-"
+    | Not    -> "not "
+    | BitNot -> "~"
+
+and string_of_bin_op = function
+    | Add       -> "+"
+    | Sub       -> "-"
+    | Mul       -> "*"
+    | MatrixMul -> "@"
+    | Div       -> "/"
+    | FloorDiv  -> "//"
+    | Mod       -> "%"
+    | Pow       -> "**"
+    | LShift    -> "<<"
+    | RShift    -> "<<"
+    | BitOr     -> "|"
+    | BitAnd    -> "&"
+    | BitXor    -> "^"
+    | And       -> "and"
+    | Or        -> "or"
+    | Eq        -> "=="
+    | Neq       -> "!="
+    | Lt        -> "<"
+    | LtE       -> "<="
+    | Gt        -> ">"
+    | GtE       -> ">="
+    | Is        -> "is"
+    | IsNot     -> "is not"
+    | In        -> "in"
+    | NotIn     -> "not in"

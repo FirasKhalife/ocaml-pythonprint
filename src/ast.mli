@@ -9,6 +9,7 @@ type typed_id = py_id * py_type option
 and py_type = 
   | TypeId of py_id
   | TypeGeneric of py_id * type_params
+  | Callable of py_type list * py_type
 
 and type_params = py_type list
 
@@ -31,11 +32,18 @@ and yield =
 and class_block = class_stmt list
 
 and class_stmt =
-  | ClassPass
   | ClassDecorator of py_id
   | ClassVarDef of typed_id list * expr
   | InstanceVarDef of py_id * py_type
-  | MethodDef of py_id * type_params * params * block
+  | MethodDef of py_id * type_params * params * (block * py_type option)
+
+(* except [exception [as target]] : suite *)
+and except = (expr * py_id option) option * block
+(* except* exception [as target] : suite *)
+and except_star = expr * py_id option * block
+and except_list = 
+  | ExceptList of except list
+  | ExceptStarList of except_star list
 
 and stmt =
   (* import: dotted_name list *)
@@ -61,19 +69,21 @@ and stmt =
   (* raise exception: exception name * message * from expression *)
   | Raise of py_id * string * py_id option
   (* function definition: name * type params * parameters * body *)
-  | FunDef of py_id * type_params * params * block
-  (* class definition: name * type params * parent classes * body *)
+  | FunDef of py_id * type_params * params * (block * py_type option)
+  (* class definition: name * type params * parent classes * body *)  
   | ClassDef of py_id * type_params * py_type list * class_block
   (* pattern matching: expression * list of branches *)
   | Match of expr * branch list
-  (* if statement: condition * elif block list * then block * else block *)
+  (* if statement: condition * then block * elif block list * else block *)
   | IfStmt of expr * block * (expr * block) list * block
-  (* while loop: condition * body *)
-  | While of expr * block
-  (* for loop: variable * iterable * body *)
-  | For of py_id * expr * block
-  (* try-catch: try block * (exception name * target * catch block) list * finally block *)
-  | Try of block * (py_id * py_id * block) list * block
+  (* while loop: condition * body * else block *)
+  | While of expr * block * block
+  (* for loop: variables * iterables * body * else block *)
+  | For of expr list * expr list * block * block
+  (* try-except: try block * (exception * target * catch block) list * else block * finally block *)
+  | TryExcept of block * except_list * block * block
+  (* try-finally: try block * finally block *)
+  | TryFinally of block * block
   (* with: expression * target * body *)
   | With of expr * py_id * block
   (* print: expression *)
@@ -95,11 +105,11 @@ and stmt =
   (* continue *)
   | Continue
 
-(* expr [is_async] for expr in expr [if.. for.. if..] *)
-and comp = expr * bool * comp_iter list
+(* expr for expr in expr [if.. for.. if..] *)
+and comp = expr * comp_iter list
 and comp_iter = 
-  (* for expr in expr *)
-  | CompFor of expr * expr
+  (* [async] for expr in expr *)
+  | CompFor of bool * expr list * expr
   (* if expr *)
   | CompIf of expr
 
@@ -108,6 +118,12 @@ and slice =
   | ProperSlice of expr option * expr option * expr option
   (* any expr *)
   | SliceExpr of expr
+
+and dict_item = 
+  (* key: value *)
+  | DictItem of expr * expr
+  (* **dict *)
+  | DictUnpack of expr
 
 and expr =
   (* identifier *)
@@ -133,7 +149,7 @@ and expr =
   (* set *)
   | PySet of expr list
   (* dictionary *)
-  | Dict of (expr * expr) list
+  | Dict of dict_item list
   (* subscript: expr[e1, e2,...] *)
   | Subscription of expr * expr list
   (* slicing: primary * slice list  *)
@@ -142,12 +158,14 @@ and expr =
   | ListComp of comp
   (* set comprehension: {comp} *)
   | SetComp of comp
-  (* dictionary comprehension: {comp} - syntactically identical but semantically different of a set *)
-  | DictComp of comp
+  (* dictionary comprehension: {expr: comp} - syntactically identical but semantically different of a set *)
+  | DictComp of expr * comp
   (* generator expression: (comp) *)
   | GenExpr of comp
-  (* starred expression, unpacking: *iterable *)
+  (* starred expression: *expr *)
   | Starred of expr
+  (* double starred expression: **expr *)
+  | DoubleStarred of expr
   (* string *)
   | String of string
   (* imaginary number *)
@@ -160,33 +178,40 @@ and expr =
   | Bool of bool
   (* None *)
   | PyNone
-  (* operators*)
-  | Add of expr * expr
-  | Sub of expr * expr
-  | Mul of expr * expr
-  | MatrixMul of expr * expr
-  | Div of expr * expr
-  | FloorDiv of expr * expr
-  | Mod of expr * expr
-  | Pow of expr * expr
-  | LShift of expr * expr
-  | RShift of expr * expr
-  | BitOr of expr * expr
-  | BitAnd of expr * expr
-  | BitXor of expr * expr
-  | BitNot of expr
-  | And of expr * expr
-  | Or of expr * expr
-  | Not of expr
-  | Pos of expr
-  | Neg of expr
-  | Eq of expr * expr
-  | Neq of expr * expr
-  | Lt of expr * expr
-  | LtE of expr * expr
-  | Gt of expr * expr
-  | GtE of expr * expr
-  | Is of expr * expr
-  | IsNot of expr * expr
-  | In of expr * expr
-  | NotIn of expr * expr
+  (* unary operators *)
+  | UnOp of unary_op * expr
+  (* binary operators *)
+  | BinOp of binary_op * expr * expr
+
+and unary_op =
+  | Not
+  | Pos
+  | Neg
+  | BitNot
+
+and binary_op =
+  | Add
+  | Sub
+  | Mul
+  | MatrixMul
+  | Div
+  | FloorDiv
+  | Mod
+  | Pow
+  | LShift
+  | RShift
+  | BitOr
+  | BitAnd
+  | BitXor
+  | And
+  | Or
+  | Eq
+  | Neq
+  | Lt
+  | LtE
+  | Gt
+  | GtE
+  | Is
+  | IsNot
+  | In
+  | NotIn
