@@ -1,3 +1,4 @@
 (library
  (name python_pp)
+ (public_name python-pp)
  (modules_without_implementation ast))
