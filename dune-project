@@ -11,4 +11,4 @@
  (depends
   (dune (>= 3.6.1))
   (ocaml (>= 4.09.0)))
- (synopsis "The Coq Proof Assistant -- Core Binaries and Tools"))
+ (synopsis "Python pretty-print API for OCaml"))
